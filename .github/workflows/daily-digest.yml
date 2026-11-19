@@ -1,3 +1,4 @@
+# Runs scripts/digest.py daily and posts the result to Discord.
 name: Daily Vector Search Digest
 
 on:

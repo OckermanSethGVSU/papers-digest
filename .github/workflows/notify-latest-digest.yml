@@ -1,3 +1,4 @@
+# Manually re-sends the newest daily digest to Discord.
 name: Send Latest Digest to Discord
 
 on:
