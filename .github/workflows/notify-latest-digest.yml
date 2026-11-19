@@ -19,7 +19,7 @@ jobs:
       - name: Find latest digest
         id: digest
         run: |
-          DIGEST_PATH=$(find digests -type f -name digest.md | sort | tail -n 1)
+          DIGEST_PATH=$(find digests/daily -type f -name "*.md" 2>/dev/null | sort | tail -n 1)
           if [ -z "$DIGEST_PATH" ]; then
             echo "No digest files found"
             exit 1

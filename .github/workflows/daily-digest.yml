@@ -1,12 +1,16 @@
-name: Weekly Research Digest
+name: Daily Vector Search Digest
 
 on:
   schedule:
-    - cron: "0 7 * * 1" # every Monday 07:00 UTC
+    - cron: "0 7 * * *" # every day 07:00 UTC
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: daily-digest
+  cancel-in-progress: false
 
 jobs:
   digest:
@@ -22,34 +26,36 @@ jobs:
         run: pip install anthropic
 
       - name: Generate digest
+        id: generate
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scripts/digest.py
 
       - name: Commit and push
         id: commit
+        env:
+          DIGEST_PATH: ${{ steps.generate.outputs.digest_path }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add digests/
           if git diff --cached --quiet; then
             echo "No changes to commit"
-            echo "digest_changed=false" >> "$GITHUB_OUTPUT"
-          else
-            WEEK=$(date -u +"%G-W%V")
-            DIGEST_PATH="digests/$(date -u +"%G")/week-$(date -u +"%V")/digest.md"
-            git commit -m "digest: ${WEEK}"
-            git push
-            echo "digest_changed=true" >> "$GITHUB_OUTPUT"
-            echo "digest_path=${DIGEST_PATH}" >> "$GITHUB_OUTPUT"
-            echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          if [ -n "$DIGEST_PATH" ]; then
+            git commit -m "digest: $(date -u +%F)"
+          else
+            git commit -m "digest: update seen papers $(date -u +%F)"
+          fi
+          git push
+          echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Notify Discord
-        if: steps.commit.outputs.digest_changed == 'true'
+        if: steps.generate.outputs.digest_path != ''
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          DIGEST_PATH: ${{ steps.commit.outputs.digest_path }}
+          DIGEST_PATH: ${{ steps.generate.outputs.digest_path }}
           DIGEST_COMMIT_SHA: ${{ steps.commit.outputs.commit_sha }}
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_REPOSITORY: ${{ github.repository }}
