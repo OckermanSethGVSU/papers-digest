@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHONUNBUFFERED: "1"
+
 concurrency:
   group: daily-digest
   cancel-in-progress: false

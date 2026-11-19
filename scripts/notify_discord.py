@@ -3,6 +3,7 @@
 import argparse
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -11,6 +12,8 @@ from pathlib import Path
 
 MAX_MESSAGE_LENGTH = 1_900
 SUPPRESS_EMBEDS = 1 << 2
+MESSAGE_INTERVAL_S = 1.5  # stay under Discord's webhook rate limit
+MAX_RATE_LIMIT_RETRIES = 5
 
 
 def normalize_webhook_url(webhook_url: str) -> str:
@@ -70,22 +73,39 @@ def split_digest_messages(markdown: str, digest_url: str) -> list[str]:
     return messages
 
 
+def retry_after_seconds(error: urllib.error.HTTPError) -> float:
+    """How long Discord asked us to wait after a 429, from the body or headers."""
+    try:
+        return float(json.loads(error.read().decode("utf-8"))["retry_after"])
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+        return float(error.headers.get("Retry-After") or 2)
+
+
 def post_json(webhook_url: str, payload: dict) -> dict:
-    """Post a JSON Discord webhook message and return its response when present."""
+    """Post a JSON Discord webhook message, waiting out rate limits, and return its response."""
     payload = {**payload, "flags": payload.get("flags", 0) | SUPPRESS_EMBEDS}
     body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        webhook_url,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "paper-digest/1.0",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        response_body = response.read()
-    return json.loads(response_body) if response_body else {}
+    for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+        request = urllib.request.Request(
+            webhook_url,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "paper-digest/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                response_body = response.read()
+            return json.loads(response_body) if response_body else {}
+        except urllib.error.HTTPError as error:
+            if error.code != 429 or attempt == MAX_RATE_LIMIT_RETRIES:
+                raise
+            wait = retry_after_seconds(error) + 0.5
+            print(f"rate limited by Discord; waiting {wait:.1f}s")
+            time.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 def with_query_params(url: str, **params: str) -> str:
@@ -118,6 +138,7 @@ def post_forum_digest(webhook_url: str, title: str, messages: list[str]) -> None
 
     thread_url = with_query_params(webhook_url, thread_id=str(thread_id))
     for message in messages[1:]:
+        time.sleep(MESSAGE_INTERVAL_S)
         post_json(thread_url, {"content": message, "allowed_mentions": {"parse": []}})
 
 
